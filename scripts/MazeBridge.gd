@@ -15,6 +15,7 @@ const FOG_DIM_SOURCE := 0
 const FOG_DARK_SOURCE := 1
 const PLAYER_SCENE := preload("res://scenes/Player.tscn")
 const PLAYER_SPAWN := Vector2i(1, 1)
+const MEMORY_RADIUS := 4  ## Chebyshev radius around player where ever-seen cells stay dim; beyond this → dark
 
 @onready var tile_layer: TileMapLayer = $TileMapLayer
 @onready var fog_layer: TileMapLayer = $FogLayer
@@ -39,14 +40,25 @@ func is_wall(cell: Vector2i) -> bool:
 	var row: Array = tiles[cell.y]
 	return int(row[cell.x]) == 1
 
-func update_vision(center: Vector2i, radius: int) -> void:
-	for prev in _revealed.keys():
-		fog_layer.set_cell(prev, FOG_DIM_SOURCE, ATLAS_COORDS)
-	for dy in range(-radius, radius + 1):
-		for dx in range(-radius, radius + 1):
+func update_vision(center: Vector2i, vision_radius: int) -> void:
+	if _maze.is_empty():
+		return
+	var w := int(_maze.get("width", 0))
+	var h := int(_maze.get("height", 0))
+	for y in h:
+		for x in w:
+			var c := Vector2i(x, y)
+			var cheb: int = max(abs(c.x - center.x), abs(c.y - center.y))
+			if cheb <= vision_radius:
+				fog_layer.set_cell(c, -1)
+			elif cheb <= MEMORY_RADIUS and _revealed.has(c):
+				fog_layer.set_cell(c, FOG_DIM_SOURCE, ATLAS_COORDS)
+			else:
+				fog_layer.set_cell(c, FOG_DARK_SOURCE, ATLAS_COORDS)
+	for dy in range(-vision_radius, vision_radius + 1):
+		for dx in range(-vision_radius, vision_radius + 1):
 			var c := center + Vector2i(dx, dy)
 			if _is_in_bounds(c):
-				fog_layer.set_cell(c, -1)
 				_revealed[c] = true
 
 func _is_in_bounds(cell: Vector2i) -> bool:
