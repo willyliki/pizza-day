@@ -1,26 +1,60 @@
 extends Node2D
 ##
-## M1 — drives the C ↔ Godot pipeline.
-## Runs the maze_core executable, reads maze_state.json, and renders it
-## onto the child TileMapLayer.
+## M1 + M2 — drives the C ↔ Godot pipeline and manages maze + fog rendering.
 ##
-## Source IDs in maze_tileset.tres:
-##   0 = floor
-##   1 = wall
-## Tile values from maze_core JSON:
-##   0 = floor
-##   1 = wall
-## The mapping is intentionally identity so v can be passed straight in.
+## Runs the maze_core executable, reads maze_state.json, renders it onto the
+## maze TileMapLayer, fills the FogLayer with dark fog, and spawns the player.
+##
+## Source IDs:
+##   maze_tileset.tres → 0 = floor, 1 = wall
+##   fog_tileset.tres  → 0 = dim (previously seen), 1 = dark (never seen)
+## Tile values from maze_core JSON are identity-mapped to source ids.
 
 const ATLAS_COORDS := Vector2i(0, 0)
+const FOG_DIM_SOURCE := 0
+const FOG_DARK_SOURCE := 1
+const PLAYER_SCENE := preload("res://scenes/Player.tscn")
+const PLAYER_SPAWN := Vector2i(1, 1)
 
 @onready var tile_layer: TileMapLayer = $TileMapLayer
+@onready var fog_layer: TileMapLayer = $FogLayer
+
+var _maze: Dictionary
+var _revealed: Dictionary  ## Vector2i → true; every cell that has ever been in vision
 
 func _ready() -> void:
-	var maze := _run_maze_core()
-	if maze.is_empty():
+	_maze = _run_maze_core()
+	if _maze.is_empty():
 		return
-	_render_maze(maze)
+	_render_maze(_maze)
+	_init_fog(_maze)
+	_spawn_player()
+
+func is_wall(cell: Vector2i) -> bool:
+	if _maze.is_empty():
+		return true
+	if not _is_in_bounds(cell):
+		return true
+	var tiles: Array = _maze.get("tiles", [])
+	var row: Array = tiles[cell.y]
+	return int(row[cell.x]) == 1
+
+func update_vision(center: Vector2i, radius: int) -> void:
+	for prev in _revealed.keys():
+		fog_layer.set_cell(prev, FOG_DIM_SOURCE, ATLAS_COORDS)
+	for dy in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			var c := center + Vector2i(dx, dy)
+			if _is_in_bounds(c):
+				fog_layer.set_cell(c, -1)
+				_revealed[c] = true
+
+func _is_in_bounds(cell: Vector2i) -> bool:
+	if _maze.is_empty():
+		return false
+	var w := int(_maze.get("width", 0))
+	var h := int(_maze.get("height", 0))
+	return cell.x >= 0 and cell.y >= 0 and cell.x < w and cell.y < h
 
 func _run_maze_core() -> Dictionary:
 	var project_dir := ProjectSettings.globalize_path("res://")
@@ -63,3 +97,17 @@ func _render_maze(maze: Dictionary) -> void:
 			var source_id := int(row[x])
 			tile_layer.set_cell(Vector2i(x, y), source_id, ATLAS_COORDS)
 	print("maze_core: rendered %dx%d, seed=%s" % [w, h, maze.get("seed", "?")])
+
+func _init_fog(maze: Dictionary) -> void:
+	var w := int(maze.get("width", 0))
+	var h := int(maze.get("height", 0))
+	fog_layer.clear()
+	for y in h:
+		for x in w:
+			fog_layer.set_cell(Vector2i(x, y), FOG_DARK_SOURCE, ATLAS_COORDS)
+
+func _spawn_player() -> void:
+	var player := PLAYER_SCENE.instantiate()
+	player.cell = PLAYER_SPAWN
+	add_child(player)
+	print("player: spawned at cell %s" % str(PLAYER_SPAWN))
